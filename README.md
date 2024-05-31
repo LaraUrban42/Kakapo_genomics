@@ -6,6 +6,6 @@ We provide code to process the genomic data, replicate all SLiM genomic simulati
 
 All kākāpō population genomic data and the genetic variant callset are available via an application form since access to the data is controlled by a data committee composed of the Aotearoa New Zealand Department of Conservation and Te Rūnanga o Ngāi Tahu: https://www.doc.govt.nz/our-work/kakapo-recovery/what-we-do/research-for-the-future/kakapo125-gene-sequencing/request-kakapo125-data/
 
-![alt text]([http://url/to/img.png](https://drive.google.com/file/d/1hdtdaEkWVOt_Lpr-_STMRIb-bScSCYyM/view?usp=sharing))
+![alt text]([https://github.com/LaraUrban42/Kakapo_genomics/assets/171344181/18821a0c-2648-4ba0-bb2b-9f3002dc320d])
 
 
