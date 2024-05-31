@@ -1,0 +1,400 @@
+initialize() {
+	
+	if (exists("s_coef")==0){
+		defineConstant("s_coef",0.05); // selection coefficient, it has to match the input file
+	}
+	if (exists("demoFile_in")==0){
+		defineConstant("demoFile_in","0_demo_PSMCStw_GONE_full_reduced.txt"); // path of demography file, size of ancestral population is taken from here
+	}
+	if (exists("dirOUT")==0){
+		defineConstant("dirOUT","test_out/"); // path of output file
+	}
+
+	if (exists("outPref_in")==0){
+		defineConstant("outPref_in","out_step2"); // prefix of output file
+	}
+
+	if (exists("dir_slim_in")==0){
+		defineConstant("dir_slim_in","exampleOutputFiles/"); // inout slim file
+	}
+
+	if (exists("DNFS_start")==0){
+		defineConstant("DNFS_start",0); // switch to turn NFDS from the start of the simulation
+	}
+	if (exists("NFDSoff")==0){
+		defineConstant("NFDSoff",0); // switch to turn NFDS for last 40 generation
+	}
+	if (exists("delS")==0){
+		defineConstant("delS",0); // deleterious selection coefficient, 0 for scenarios 1 and 2, and negative for scenario 3
+	}
+	
+	
+	defineConstant("rho",1e-8);
+	defineConstant("delNo",1); // number of deleterious locus for each color type
+	defineConstant("burnIn",10); // how many generations pass before things start to change
+	defineConstant("NoTries",1000); // number of tries for establishment before simulation is finished
+	
+	defineConstant("lociIntro",10); // simulation step at which SNPs are introduced
+
+	// ancestral Ne is taken from demo file
+	X=readFile(demoFile_in);
+	defineConstant("header",X[0]);
+	defineConstant("demoFile",X[1:(length(X)-1)]);
+	
+	// coordinates of SNPs
+	defineConstant("haplotype1",c(1000-2243)); // 
+	defineConstant("SNP1",1600); // 
+	defineConstant("haplotype2",c(43984-44823)); // 
+	defineConstant("SNP2",44400); // 
+	
+	// mutation rate set to zero	
+	defineConstant("mu",0);
+	
+	initializeMutationType("m1", 0.5, "f", 0.0); // neutral
+	initializeMutationType("m2", 0.5, "f", 0.0);        // causal 1
+	initializeMutationType("m3", 0.5, "f", 0.0);        // causal 2
+	initializeMutationType("m4", 0.0, "f", -1*delS); // deleterious
+	m2.convertToSubstitution = F;m2.color="red";
+	m3.convertToSubstitution = F;m3.color="red";
+	m4.convertToSubstitution = F;m4.color="grey";
+	
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 50000);
+	
+	initializeRecombinationRate(rho);
+	initializeMutationRate(mu);
+	
+	defineConstant("simID",floor(runif(1,0,100000)));
+	
+	system("mkdir -p "+dirOUT+"/tmpSLIM");
+}
+
+1  {
+	// read input file	
+	CMD="ls "+dir_slim_in+"/*_s"+s_coef+"_*.slim_out";
+	slim_in=sample(system(CMD),1);
+	sim.readFromPopulationFile(slim_in);
+	defineConstant("firstGen",demoFile[length(demoFile)-1]);
+	LAST=asInteger(strsplit(demoFile[0],"\t")[2]);
+	defineConstant("initGen",sim.generation);
+	defineConstant("initRun",initGen+burnIn);
+	defineConstant("lastGen",initRun+LAST);
+	//Haast's eagle extinction ~1400 or ~41 generations ago
+	defineConstant("HaastGen",lastGen-41);
+	
+	// schedule blocks
+	sim.rescheduleScriptBlock(s0,initGen+1,lastGen+1); // check if sweep lost or fixed
+	sim.rescheduleScriptBlock(s1,lastGen+1000,lastGen+1000); // end
+	sim.rescheduleScriptBlock(s2,HaastGen,HaastGen); // haast
+	sim.rescheduleScriptBlock(s3,initRun,lastGen); // endBurnin
+	
+	defineConstant("outPref",dirOUT+"/"+outPref_in+"_DNFSstart"+DNFS_start+"_NFDSoff"+NFDSoff+"_delS"+delS+"_s"+s_coef+"_rho"+rho+"_initGen"+initGen+"_initRun"+initRun+"_HaastGen"+HaastGen+"_lastGen"+lastGen+"_seed"+getSeed());
+	
+	
+	print("##################"+"\n");
+	print("### Generations");
+	print("initGen: "+initGen);
+	print("initRun: "+initRun);
+	print("HaastGen: "+HaastGen);
+	print("lastGen: "+lastGen);
+	print("### blocks");
+	print("sweep check:");print(s0);
+	print("End:");print(s1);
+	print("haast:");print(s2);
+	print("initRun:");print(s3);
+	print("\n"+"### output");
+	print(outPref);
+	print("\n"+"##################"+"\n");
+	
+	p1.tag=0;
+	if(DNFS_start==1){sim.tag=1;}else{sim.tag=0;}
+	m1.tag=0;
+	
+		
+	out= "seed" +"\t"+ "gen" +"\t"+ "pop" +"\t"+ "N" +"\t"+ "mType" +"\t"+ "mID" +"\t"+ "mPos" +"\t"+ "s" +"\t"+ "h" +"\t"+ "freq"+"\t"+ "HomRef"+"\t"+ "HomAlt"+"\t"+ "Het"+"\t"+ "olive"+"\t"+ "green"+"\t"+ "NFDS" +"\t"+ "LOAD" +"\t"+ "state";
+	writeFile(outPref+"_mFreq.txt",out,append=F);
+
+	out= "generation" +"\t"+ "state" +"\t"+ "Ne" +"\t"+ "date" +"\t"+ "time" +"\t"+ "seed";
+	writeFile(outPref+"_sweepLostFixed.txt",out,append=F);
+
+}
+
+
+// change Ne to fit demographic trajectory
+s3 1000000 late() {
+	if(sim.generation==initRun){
+		print(sim.generation+" change intial Ne");
+		p1.setSubpopulationSize(asInteger(strsplit(firstGen,"\t")[1]));
+	};
+	
+	if(sim.generation>initRun){
+		for(line in demoFile){
+			GEN=asInteger(strsplit(line,"\t")[2])+initRun;
+			Ne=asInteger(strsplit(line,"\t")[1]);
+			if(sim.generation==GEN){
+				if(p1.individualCount!=Ne){print(sim.generation+" change Ne to "+Ne);};
+				p1.setSubpopulationSize(Ne);
+			};
+		};
+	}
+
+}
+
+
+// outpit every 100 generation before predator extinction and every generation after
+1: late(){
+	if( (sim.generation < HaastGen & sim.generation % 100 ==0) |
+		(sim.generation >= (HaastGen+1)))
+	{
+		mFreq=mutFreq(p1,m2);
+		if(length(mFreq)==0){
+			inds = p1.individuals;
+			olive= rep(0.0,p1.individualCount);
+			green= rep(0.0,p1.individualCount);
+			olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+			green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+			olive=sum(olive)/p1.individualCount;
+			green=sum(green)/p1.individualCount;
+			out=getSeed() +"\t"+ sim.generation +"\t"+ p1.id +"\t"+ p1.individualCount +"\t"+ 2 +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ 0+"\t"+ 1+"\t"+ 0+"\t"+ 0+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+			writeFile(outPref+"_mFreq.txt",out+"\t"+ "running",append=T);
+		} else {	writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "running",append=T);
+		}
+		
+		mFreq=mutFreq(p1,m3);
+		if(length(mFreq)==0){
+			inds = p1.individuals;
+			olive= rep(0.0,p1.individualCount);
+			green= rep(0.0,p1.individualCount);
+			olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+			green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+			olive=sum(olive)/p1.individualCount;
+			green=sum(green)/p1.individualCount;
+			out=getSeed() +"\t"+ sim.generation +"\t"+ p1.id +"\t"+ p1.individualCount +"\t"+ 3 +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ 0+"\t"+ 1+"\t"+ 0+"\t"+ 0+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+			writeFile(outPref+"_mFreq.txt",out+"\t"+ "running",append=T);
+		} else {	writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "running",append=T);
+		}
+		
+		mFreq=mutFreq(p1,m4);
+		if(length(mFreq)>0){
+			writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "running",append=T);
+		}
+	
+	}
+	
+	
+	// check if phenotype lost and reatart or end if it did
+	if(p1.individualCount<200){ // done for the very last of the simulation as it is expensive to estimate frequencies, but the polymorphism can get lost before
+		mFreq=mutFreq(p1,m2);
+		if(length(mFreq)==0){
+			inds = p1.individuals;
+			olive= rep(0.0,p1.individualCount);
+			green= rep(0.0,p1.individualCount);
+			olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+			green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+			olive=sum(olive)/p1.individualCount;
+			green=sum(green)/p1.individualCount;
+			out=getSeed() +"\t"+ sim.generation +"\t"+ p1.id +"\t"+ p1.individualCount +"\t"+ 2 +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ 0+"\t"+ 1+"\t"+ 0+"\t"+ 0+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+			writeFile(outPref+"_mFreq.txt",out+"\t"+ "end",append=T);
+		} else {
+			//	writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "end",append=T);
+			mFreq=strsplit(mFreq,"\t");
+			olive=asFloat(mFreq[13]);
+			green=asFloat(mFreq[14]);
+		}
+		
+		if(olive==0|green==0){
+			print("before restart" + sim.generation);
+			cat(simID + "-" +p1.tag + " : END - RESTARTING\n");
+			p1.tag=p1.tag+1;
+			TAG=p1.tag;
+			LOST=sim.generation+"\t"+"LOST"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed()+"\t"+sim.tag+"\t"+m1.tag;
+			writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+			
+			
+			CMD="ls "+dir_slim_in+"/*_s"+s_coef+"_*.slim_out";
+			slim_in=sample(system(CMD),1);
+			sim.readFromPopulationFile(slim_in);
+			print("after restart" + sim.generation);
+			setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+			p1.tag=TAG;
+			// what happens when restarts?
+			if(DNFS_start==1){sim.tag=1;}else{sim.tag=0;}
+			m1.tag=0;
+			if(p1.tag>NoTries){
+				print("Simulation failed too many times");
+				sim.simulationFinished();
+				system("rm "+dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+			}
+		
+		}
+	}
+
+}
+
+
+// turn NFDS off if NFDSoff == 1
+// if delS is not zero, add deleterious loci
+s2 1000000 late() {
+	if(rbinom(1,1,0.5)==1){
+		//		sim.outputFull(outPref+"_out_haastEagle_gen"+sim.generation+"_seed"+getSeed()+".slim_out");
+	}
+	if(NFDSoff==1){sim.tag=0;}
+	if(delS!=0){
+		m1.tag=1;
+		if(m1.tag==1){
+			inds = p1.individuals;
+			M2genomes_olive=c();
+			M3genomes_olive=c();
+			M2genomes_green=c();
+			M3genomes_green=c();
+			for(i in inds)
+			{			M2genomes_olive=c(M2genomes_olive,i.genomes[sapply(i.genomes,"length(applyValue.mutationsOfType(m2))>0;")]);
+				M3genomes_olive=c(M3genomes_olive,i.genomes[sapply(i.genomes,"length(applyValue.mutationsOfType(m3))>0;")]);
+				M2genomes_green=c(M2genomes_green,i.genomes[!sapply(i.genomes,"length(applyValue.mutationsOfType(m2))>0;")]);
+				M3genomes_green=c(M3genomes_green,i.genomes[!sapply(i.genomes,"length(applyValue.mutationsOfType(m3))>0;")]);
+			}
+			M2genomes_olive.addNewDrawnMutation(m4, seq(SNP1+1,SNP1+100,length=delNo));
+			M3genomes_olive.addNewDrawnMutation(m4, seq(SNP2+1,SNP2+100,length=delNo));
+			
+		}
+		
+	}
+}
+
+// restarting simulation if sweep lost or fixed (not active)
+s0 1000000 late() {
+}
+
+// last step
+s1 1000000 late() {
+	
+	print("before restart" + sim.generation);
+	cat(simID + "-" +p1.tag + " : END - RESTARTING\n");
+	p1.tag=p1.tag+1;
+	TAG=p1.tag;
+	LOST=sim.generation+"\t"+"LongEnd"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed()+"\t"+sim.tag+"\t"+m1.tag;
+	writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+	
+	mFreq=mutFreq(p1,m2);
+	if(length(mFreq)==0){
+		inds = p1.individuals;
+		olive= rep(0.0,p1.individualCount);
+		green= rep(0.0,p1.individualCount);
+		olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+		green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+		olive=sum(olive)/p1.individualCount;
+		green=sum(green)/p1.individualCount;
+		out=getSeed() +"\t"+ sim.generation +"\t"+ p1.id +"\t"+ p1.individualCount +"\t"+ 2 +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ 0+"\t"+ 1+"\t"+ 0+"\t"+ 0+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+		writeFile(outPref+"_mFreq.txt",out+"\t"+ "end",append=T);
+	} else {	writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "end",append=T);
+	}
+	
+	mFreq=mutFreq(p1,m3);
+	if(length(mFreq)==0){
+		inds = p1.individuals;
+		olive= rep(0.0,p1.individualCount);
+		green= rep(0.0,p1.individualCount);
+		olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+		green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+		olive=sum(olive)/p1.individualCount;
+		green=sum(green)/p1.individualCount;
+		out=getSeed() +"\t"+ sim.generation +"\t"+ p1.id +"\t"+ p1.individualCount +"\t"+ 3 +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ "NA" +"\t"+ 0+"\t"+ 1+"\t"+ 0+"\t"+ 0+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+		writeFile(outPref+"_mFreq.txt",out+"\t"+ "end",append=T);
+	} else {	writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "end",append=T);
+	}
+	
+	mFreq=mutFreq(p1,m4);
+	if(length(mFreq)>0){
+		writeFile(outPref+"_mFreq.txt",mFreq+"\t"+ "end",append=T);
+	}
+	
+	CMD="ls "+dir_slim_in+"/*_s"+s_coef+"_*.slim_out";
+	slim_in=sample(system(CMD),1);
+	sim.readFromPopulationFile(slim_in);
+	print("after restart" + sim.generation);
+	setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+	p1.tag=TAG;
+	
+	// what happens when restarts?
+	if(DNFS_start==1){sim.tag=1;}else{sim.tag=0;}
+	m1.tag=0;
+	
+	
+	if(p1.tag>NoTries){
+		print("Simulation failed too many times");
+		sim.simulationFinished();
+		system("rm "+dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+	}
+}
+
+// NFDS when sim.tag==1 it is on
+1: late() {
+	// construct phenotypes and fitness effects from QTLs
+	if(sim.tag==1){
+		//	print("DNFS is on!!!");
+		inds = p1.individuals;
+		olive= rep(0.0,p1.individualCount);
+		green= rep(0.0,p1.individualCount);
+		olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+		green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+		if(!sum(olive+green)==p1.individualCount){print("pheno assignemnt went wrong!!");sim.simulationFinished();}
+		pGREEN=sum(green);
+		pGREEN=pGREEN/p1.individualCount;
+		qOLIVE=1-pGREEN;
+		wGreen=(1-pGREEN*s_coef);
+		wOlive=(1-qOLIVE*s_coef);
+		scalling= rep(1.0,p1.individualCount);
+		scalling[green==1]=wGreen;
+		scalling[olive==1]=wOlive;
+		inds.fitnessScaling = scalling;
+	}
+}
+
+// tracker
+1: { if(sim.generation % (2) == 0){print("RUN: "+p1.tag+"  - gen:"+sim.generation+" - N="+sim.subpopulations.individualCount+" - " + time()+" - "+date()+" - "+sim.generation +" - "+"NFDS= "+ sim.tag +" - "+"LOAD= "+ m1.tag +" - "+"memory= "+usage()/1000+"Gb");}
+}
+
+
+////////////
+
+function	(s) mutFreq(o pop, o m)
+{
+	mut = unique(pop.genomes.mutationsOfType(m));
+	id = mut.id;
+	type = mut.mutationType.id;
+	s = mut.selectionCoeff;
+	h = mut.mutationType.dominanceCoeff;
+	freq= sim.mutationFrequencies(pop,mut);
+	pos=mut.position;
+	HomRef=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==F&pop.individuals.genome2.containsMutations(applyValue)==F)/pop.individuals.size();");
+	HomAlt=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==T&pop.individuals.genome2.containsMutations(applyValue)==T)/pop.individuals.size();");
+	Het1=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==F&pop.individuals.genome2.containsMutations(applyValue)==T)/pop.individuals.size();");
+	Het2=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==T&pop.individuals.genome2.containsMutations(applyValue)==F)/pop.individuals.size();");
+	if(!isNULL(Het1) & !isNULL(Het2))
+	{
+		Het=Het1+Het2;
+	}
+	if(!isNULL(Het1) & isNULL(Het2))
+	{
+		Het=Het1;
+	}
+	if(isNULL(Het1) & !isNULL(Het2))
+	{
+		Het=Het2;
+	}
+	if(isNULL(Het1) & isNULL(Het2))
+	{
+		Het=0;
+	}
+	inds = p1.individuals;
+	olive= rep(0.0,p1.individualCount);
+	green= rep(0.0,p1.individualCount);
+	olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+	green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+	olive=sum(olive)/p1.individualCount;
+	green=sum(green)/p1.individualCount;
+	
+	
+	out=getSeed() +"\t"+ sim.generation +"\t"+ pop.id +"\t"+ pop.individualCount +"\t"+ type +"\t"+ id +"\t"+ pos +"\t"+ s +"\t"+ h +"\t"+ freq+"\t"+ HomRef+"\t"+ HomAlt+"\t"+ Het+"\t"+ olive+"\t"+ green+"\t"+sim.tag+"\t"+ m1.tag ;
+	return(out);
+}

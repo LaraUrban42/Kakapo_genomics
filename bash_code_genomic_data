@@ -1,0 +1,18 @@
+module load GCCcore/7.4.0
+module load BCFtools/1.9-GCC-7.4.0
+module load PLINK/1.09b6.16
+
+#filter for final variant set
+bcftools filter -i 'QUAL>20 & FMT/GQ>10 & FMT/DP>3' /nesi/nobackup/uoo02695/Kakapo/Trained.bcf --output-type u --output Trained_f.bcf
+bcftools annotate --rename-chrs kakapo_map_numbers.tsv Trained_f.bcf  --output-type u -o Trained_nr.bcf
+plink --bcf Trained_nr.bcf --make-bed --freq --chr-set 89 --maf 0.05 --geno 0.2 --hwe 0.0000001 --snps-only just-acgt --keep-allele-order --biallelic-only strict --vcf-filter --out plink_f_nr
+
+#PCA
+plink --bfile plink_f_nr --indep-pairwise 50 10 0.8 --chr-set 89 --out LD_nr --noweb
+plink --bfile plink_f_nr  --exclude LD_nr.prune.out --chr-set 89 --noweb --make-bed --out plink_f_nr_LD
+plink --bfile plink_f_nr_LD --pca var-wts 10 --chr-set 89 --out plink_f_nr_LD_pca
+plink --bfile plink_f_nr_LD --make-rel square --chr-set 89 --out plink_f_nr_LD
+
+#make data for RepeatABEL
+plink  --bfile plink_f_nr --recode --transpose --chr-set 89 --out plink_f_nr_abel --noweb
+

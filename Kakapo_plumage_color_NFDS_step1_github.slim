@@ -1,0 +1,336 @@
+// Script for Urban et al. The ghost of selection past: evolution and conservation relevance of the kākāpō color polymorphism
+// by Hernan E. Morales - hern.moral@gmail.com
+// Establishment simulations for a two loci color polymorphism under negative frequency dependent selection
+
+initialize() {
+
+	if (exists("s_coef")==0){
+		defineConstant("s_coef",0.2); // selection coefficient
+	}
+	if (exists("demoFile_in")==0){
+		defineConstant("demoFile_in","0_demo_PSMCStw_GONE_full_reduced.txt"); // path of demography file, size of ancestral population is taken from here
+	}
+	if (exists("dirOUT")==0){
+		defineConstant("dirOUT","test_out/"); // path of output file
+	}
+
+	if (exists("outPref_in")==0){
+		defineConstant("outPref_in","out_step1_NFDS"); // prefix of output file
+	}
+
+	if (exists("MAF")==0){
+		defineConstant("MAF",0.1); // initial frequency of SNP1 (0.004 used in the paper)
+	}
+	
+	defineConstant("rho",1e-8); // recombination rate
+	defineConstant("delNo",1); // number of deleterious loci (not used in step1)
+	defineConstant("delS",0); // deleterious selection coefficient (not used in step 1)
+	defineConstant("NoTries",1000); // number of tries for establishment before simulation is finished
+	defineConstant("lastGen",130000); // maximum number of generation the simulation is run for (130K ~ 2 MY) 
+	defineConstant("balanceCount",5); // balance count, if count higher than this, the replicate is counted as established
+	defineConstant("OUTfiles",20); // how many output slim files maximum
+	
+	defineConstant("lociIntro",10); // simulation step at which SNPs are introduced
+
+	// ancestral Ne is taken from demo file
+	X=readFile(demoFile_in);
+	defineConstant("header",X[0]);
+	defineConstant("demoFile",X[1:(length(X)-1)]);
+	
+	// coordinates of SNPs
+	defineConstant("haplotype1",c(1000-2243)); // 
+	defineConstant("SNP1",1600); // 
+	defineConstant("haplotype2",c(43984-44823)); // 
+	defineConstant("SNP2",44400); // 
+	
+	// mutation rate set to zero	
+	defineConstant("mu",0);
+	
+	// mutation types
+	initializeMutationType("m1", 0.5, "f", 0.0); // neutral (not used)
+	initializeMutationType("m2", 0.5, "f", 0.0);        // explanatory SNP1 (sel coeff set to zero, NFDS controls effect)
+	initializeMutationType("m3", 0.5, "f", 0.0);        // explanatory SNP2 (sel coeff set to zero, NFDS controls effect)
+	initializeMutationType("m4", 0.0, "f", delS/delNo); // deleterious (not used in step 1)
+	// non-neutral mutations are kept if fixed
+	m2.convertToSubstitution = F;m2.color="red";
+	m3.convertToSubstitution = F;m3.color="red";
+	m4.convertToSubstitution = F;m4.color="grey";
+	
+	// slim set up
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 50000);
+	initializeRecombinationRate(rho);
+	initializeMutationRate(mu);
+	
+	// a new temp folder is created to store slim file to restart simulations when polymorphism is lost
+	defineConstant("simID",floor(runif(1,0,100000)));
+	system("mkdir -p "+dirOUT+"/tmpSLIM");
+}
+
+1  {
+	// add pop	
+	firstGen=demoFile[length(demoFile)-1];
+	startNe=asInteger(strsplit(firstGen,"\t")[1]);
+	sim.addSubpop("p1",startNe);
+	
+	// schedule blocks
+	sim.rescheduleScriptBlock(s0,lociIntro-2,lociIntro-2); // output slim file for restarting simulation (legacy from simulation that had burn-in period)
+	sim.rescheduleScriptBlock(s1,lociIntro-1,lociIntro-1); // introduce color SNPs
+	sim.rescheduleScriptBlock(s2,lociIntro+1,lastGen); // restarting simulation if color polymorphism is lost or fixed
+	sim.rescheduleScriptBlock(s3,lastGen,lastGen); // finish simulation
+	
+	defineConstant("outPref",dirOUT+"/"+outPref_in+"_s"+s_coef+"_rho"+rho+"_seed"+getSeed());
+	defineConstant("outPref_name",dirOUT+"/"+outPref_in+"_s"+s_coef+"_rho"+rho);
+	
+	
+	print("##################"+"\n");
+	print("### blocks");
+	print("s0");print(s0);
+	print("s1");print(s1);
+	print("s2");print(s2);
+	print("s3");print(s3);
+	print("\n"+"### output");
+	print(outPref);
+	print("\n"+"##################"+"\n");
+
+	//balanced count to add up to balanceCount
+	sim.tag=0;
+	
+	// count for number of tries
+	p1.tag=0;
+
+// headers		
+	out= "seed" +"\t"+ "gen" +"\t"+ "pop" +"\t"+ "N" +"\t"+ "mType" +"\t"+ "mID" +"\t"+ "mPos" +"\t"+ "s" +"\t"+ "h" +"\t"+ "freq"+"\t"+ "HomRef"+"\t"+ "HomAlt"+"\t"+ "Het"+"\t"+ "olive"+"\t"+ "green";
+	writeFile(outPref+"_mFreq.txt",out,append=F);
+
+	out= "generation" +"\t"+ "state" +"\t"+ "Ne" +"\t"+ "date" +"\t"+ "time" +"\t"+ "seed";
+	writeFile(outPref+"_sweepLostFixed.txt",out,append=F);
+
+}
+
+// output every 100 generations
+1: late()
+{
+	if(sim.generation%100==0)
+	{
+		mFreq=mutFreq(p1,m2);
+		writeFile(outPref+"_mFreq.txt",mFreq,append=T);
+		mFreq=mutFreq(p1,m3);
+		writeFile(outPref+"_mFreq.txt",mFreq,append=T);	
+	}
+
+	// check every 1000 generations if the polymoprhism is balanced if it is more than balanceCount then count the replicate as established
+	if(sim.generation%1000==0)
+		{
+			inds = p1.individuals;
+			olive= rep(0.0,p1.individualCount);
+			green= rep(0.0,p1.individualCount);
+			olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+			green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+			if(!sum(olive+green)==p1.individualCount){print("pheno assignemnt went wrong!!");sim.simulationFinished();}
+			pGREEN=sum(green);
+			pGREEN=pGREEN/p1.individualCount;
+			qOLIVE=1-pGREEN;
+			if( pGREEN>=0.4 & pGREEN<=0.6 ){sim.tag=sim.tag+1;print(sim.generation+" BALANCED count="+sim.tag);}else{sim.tag=0;}
+			
+			if(sim.tag >= balanceCount)
+			{
+				print("before restart" + sim.generation);
+				cat(simID + "-" +p1.tag + " : BALANCED - RESTARTING\n");
+				p1.tag=p1.tag+1;
+				TAG=p1.tag;
+				LOST=sim.generation+"\t"+"balanced"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed();
+				writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+				
+				// if succesful and no more than 20 files exist, write full ouput
+				CMD="ls "+outPref_name+"*_succesfulRun.slim_out | wc -l";
+				X=system(CMD);
+				if(asInteger(X)<OUTfiles){
+					sim.outputFull(outPref+"_gen"+sim.generation+"_seed"+getSeed()+"_succesfulRun.slim_out");
+				
+				sim.readFromPopulationFile(dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+				print("after restart" + sim.generation);
+				setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+				p1.tag=TAG;
+				sim.tag=0;
+
+				} else {
+					print("!!! enough outputs");
+					sim.simulationFinished();
+					system("rm "+dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+				}
+			
+			}
+		
+		}
+}
+
+// output slim file for restarting simulation (legacy from simulation that had burn-in period)
+s0 1000000 late() {
+	sim.outputFull(dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+}
+
+
+// introduce color SNPs
+s1 1000000 late() {
+	target = p1.sampleIndividuals(asInteger(p1.individualCount*MAF)*2);
+	target.genome2.addNewDrawnMutation(m2, c(SNP1));
+	target = p1.sampleIndividuals(1).genome2;
+	target.addNewDrawnMutation(m3, c(SNP2));
+	// output to register intial freq
+	mFreq=mutFreq(p1,m2);
+	writeFile(outPref+"_mFreq.txt",mFreq,append=T);
+	mFreq=mutFreq(p1,m3);
+	writeFile(outPref+"_mFreq.txt",mFreq,append=T);	
+
+}
+
+
+// restarting simulation if sweep lost or fixed
+s2 1000000 late() {
+	
+	// check if lost
+	if(sum(p1.genomes.countOfMutationsOfType(m2))==0 | sum(p1.genomes.countOfMutationsOfType(m3))==0)
+	{
+		print("before restart" + sim.generation);
+		cat(simID + "-" +p1.tag + " : LOST - RESTARTING\n");
+		p1.tag=p1.tag+1;
+		TAG=p1.tag;
+		LOST=sim.generation+"\t"+"lost"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed();
+		writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+		sim.readFromPopulationFile(dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+		print("after restart" + sim.generation);
+		setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+		p1.tag=TAG;
+	}
+
+	// check if fixed	
+	if(sum(p1.genomes.countOfMutationsOfType(m2))>=((p1.individualCount*2)*0.95) & sum(p1.genomes.countOfMutationsOfType(m3))>=((p1.individualCount*2)*0.95))
+	{
+		print("before restart" + sim.generation);
+		cat(simID + "-" +p1.tag + " : FIXED - RESTARTING\n");
+		p1.tag=p1.tag+1;
+		TAG=p1.tag;
+		LOST=sim.generation+"\t"+"fixed"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed();
+		writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+		
+		// if succesful and no more than 20 files exist, write full ouput
+		CMD="ls "+outPref_name+"*_succesfulRun.slim_out | wc -l";
+		X=system(CMD);
+		if(asInteger(X)<OUTfiles){
+			sim.outputFull(outPref+"_gen"+sim.generation+"_seed"+getSeed()+"_succesfulRun.slim_out");
+		}
+		sim.readFromPopulationFile(dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+		
+		print("after restart" + sim.generation);
+		setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+		p1.tag=TAG;
+	}	if(p1.tag>NoTries){
+		print("Simulation failed/succeded enough times");
+		sim.simulationFinished();
+		system("rm "+dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+	}
+}
+
+s3 1000000 late() {
+	mFreq=mutFreq(p1,m2);
+	writeFile(outPref+"_mFreq.txt",mFreq,append=T);
+	mFreq=mutFreq(p1,m3);
+	writeFile(outPref+"_mFreq.txt",mFreq,append=T);
+	
+	// if succesful and no more than 20 files exist, write full ouput
+	CMD="ls "+outPref_name+"*_succesfulRun.slim_out | wc -l";
+	X=system(CMD);
+	if(asInteger(X)<OUTfiles){
+		sim.outputFull(outPref+"_gen"+sim.generation+"_seed"+getSeed()+"_succesfulRun.slim_out");
+	}	
+	print("before restart" + sim.generation);
+	cat(simID + "-" +p1.tag + " : END - RESTARTING\n");
+	p1.tag=p1.tag+1;
+	TAG=p1.tag;
+	LOST=sim.generation+"\t"+"end"+"\t"+p1.individualCount+"\t"+date()+"\t"+time()+"\t"+getSeed();
+	writeFile(outPref+"_sweepLostFixed.txt",LOST,append=T);
+	sim.readFromPopulationFile(dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+	print("after restart" + sim.generation);
+	setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+	p1.tag=TAG;
+	
+	if(p1.tag>NoTries){
+		print("Simulation failed too many times");
+		sim.simulationFinished();
+		system("rm "+dirOUT+"/tmpSLIM/" + simID + ".slim_out");
+	}
+}
+
+
+// Negative Frequency Dependent Selection
+1: late() {
+	// construct phenotypes and fitness effects from QTLs
+	inds = p1.individuals;
+	olive= rep(0.0,p1.individualCount);
+	green= rep(0.0,p1.individualCount);
+	olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+	green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+	if(!sum(olive+green)==p1.individualCount){print("pheno assignemnt went wrong!!");sim.simulationFinished();}
+	pGREEN=sum(green);
+	pGREEN=pGREEN/p1.individualCount;
+	qOLIVE=1-pGREEN;
+	wGreen=(1-pGREEN*s_coef);
+	wOlive=(1-qOLIVE*s_coef);
+	scalling= rep(1.0,p1.individualCount);
+	scalling[green==1]=wGreen;
+	scalling[olive==1]=wOlive;
+	inds.fitnessScaling = scalling;
+}
+
+
+// keep track of progress
+1: { if(sim.generation % (100) == 0){print( sim.subpopulations.individualCount+"\t" + time()+"\t"+date()+"\t"+sim.generation+"\t"+"memory= "+usage()/1000+"Gb");}
+}
+
+
+////////////
+
+function	(s) mutFreq(o pop, o m)
+{
+	mut = unique(pop.genomes.mutationsOfType(m));
+	id = mut.id;
+	type = mut.mutationType.id;
+	s = mut.selectionCoeff;
+	h = mut.mutationType.dominanceCoeff;
+	freq= sim.mutationFrequencies(pop,mut);
+	pos=mut.position;
+	HomRef=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==F&pop.individuals.genome2.containsMutations(applyValue)==F)/pop.individuals.size();");
+	HomAlt=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==T&pop.individuals.genome2.containsMutations(applyValue)==T)/pop.individuals.size();");
+	Het1=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==F&pop.individuals.genome2.containsMutations(applyValue)==T)/pop.individuals.size();");
+	Het2=sapply(mut, "sum(pop.individuals.genome1.containsMutations(applyValue)==T&pop.individuals.genome2.containsMutations(applyValue)==F)/pop.individuals.size();");
+	if(!isNULL(Het1) & !isNULL(Het2))
+	{
+		Het=Het1+Het2;
+	}
+	if(!isNULL(Het1) & isNULL(Het2))
+	{
+		Het=Het1;
+	}
+	if(isNULL(Het1) & !isNULL(Het2))
+	{
+		Het=Het2;
+	}
+	if(isNULL(Het1) & isNULL(Het2))
+	{
+		Het=0;
+	}
+	inds = p1.individuals;
+	olive= rep(0.0,p1.individualCount);
+	green= rep(0.0,p1.individualCount);
+	olive[(inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0)]=1.0;
+	green[!((inds.countOfMutationsOfType(m2)>0) & (inds.countOfMutationsOfType(m3)>0))]=1.0;
+	olive=sum(olive)/p1.individualCount;
+	green=sum(green)/p1.individualCount;
+	
+	
+	out=getSeed() +"\t"+ sim.generation +"\t"+ pop.id +"\t"+ pop.individualCount +"\t"+ type +"\t"+ id +"\t"+ pos +"\t"+ s +"\t"+ h +"\t"+ freq+"\t"+ HomRef+"\t"+ HomAlt+"\t"+ Het+"\t"+ olive+"\t"+ green;
+	return(out);
+}
+
+
