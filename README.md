@@ -9,3 +9,4 @@ All kākāpō population genomic data and the genetic variant callset are availa
 ![alt text]([https://github.com/LaraUrban42/Kakapo_genomics/assets/171344181/18821a0c-2648-4ba0-bb2b-9f3002dc320d])
 
 
+https://github.com/LaraUrban42/Kakapo_genomics/assets/171344181/18821a0c-2648-4ba0-bb2b-9f3002dc320d
